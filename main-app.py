@@ -1,72 +1,111 @@
 import streamlit as st
+import time
+import base64
+from io import BytesIO
 from langchain_groq import ChatGroq
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 import PyPDF2
 
-# Configuración de la página
-st.set_page_config(layout="wide", page_title="RAG vs LLM Lab")
-st.title("🧪 Laboratorio: RAG vs. LLM (Zero-shot)")
+# Configuración de página y estilo
+st.set_page_config(layout="wide", page_title="EAFIT - RAG vs LLM Lab")
+st.title("🧪 RAG vs. LLM: Laboratorio Experimental")
 
-# Sidebar: Hiperparámetros (Fase 2)
+# --- SIDEBAR: Configuración (Fase 2) ---
 with st.sidebar:
-    st.header("Configuración")
+    st.header("⚙️ Hiperparámetros")
     api_key = st.text_input("Groq API Key", type="password")
-    model_name = st.selectbox("Model Select", ["llama3-70b-8192", "mixtral-8x7b-32768"])
-    temp = st.slider("Temperature", 0.0, 1.0, 0.5)
-    chunk_size = st.slider("Chunk Size", 20, 2000, 500)
+    model_choice = st.selectbox("Model Select", ["llama3-70b-8192", "mixtral-8x7b-32768"])
+    temp = st.slider("Temperature", 0.0, 1.0, 0.1)
+    c_size = st.slider("Chunk Size", 20, 2000, 500)
     top_k = st.slider("Top-K", 1, 10, 3)
+    
+    st.divider()
+    st.info("Configura estos valores para observar el cambio en la columna 'RAG Optimizado'.")
 
-# Lógica de Ingesta (Fase 2.1)
-uploaded_file = st.file_uploader("Sube un PDF", type="pdf")
+# --- FUNCIONES DE SOPORTE ---
+def get_pdf_text(pdf_file):
+    reader = PyPDF2.PdfReader(pdf_file)
+    return "".join([page.extract_text() for page in reader.pages])
+
+def get_image_text(image_file, api_key):
+    # Fase 2.1: OCR usando Llama 3.2 Vision
+    client = ChatGroq(groq_api_key=api_key, model_name="llama-3.2-11b-vision-preview")
+    img_base64 = base64.b64encode(image_file.read()).decode('utf-8')
+    msg = client.invoke([
+        {"role": "user", "content": [
+            {"type": "text", "text": "Extract all text from this image accurately."},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}}
+        ]}
+    ])
+    return msg.content
+
+# --- FASE 2: INGESTA ---
+uploaded_file = st.file_uploader("Sube un PDF o Imagen para analizar", type=["pdf", "png", "jpg", "jpeg"])
 
 if uploaded_file and api_key:
-    # Leer PDF
-    pdf_reader = PyPDF2.PdfReader(uploaded_file)
-    text = ""
-    for page in pdf_reader.pages:
-        text += page.extract_text()
+    # 1. Extracción de texto
+    if uploaded_file.type == "application/pdf":
+        raw_text = get_pdf_text(uploaded_file)
+    else:
+        raw_text = get_image_text(uploaded_file, api_key)
 
-    # Chunking & Embeddings (Fase 3.1)
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=50)
-    chunks = text_splitter.split_text(text)
+    # 2. Chunking & Embeddings (Fase 3.1)
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=c_size, chunk_overlap=50)
+    chunks = text_splitter.split_text(raw_text)
     
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     vector_store = FAISS.from_texts(chunks, embeddings)
-    retriever = vector_store.as_retriever(search_kwargs={"k": top_k})
-
-    # Área de pregunta
-    user_question = st.text_input("Haz una pregunta sobre el documento:")
-
-    if user_question:
-        llm = ChatGroq(groq_api_key=api_key, model_name=model_name, temperature=temp)
+    
+    # --- FASE 3 & 4: COMPARACIÓN Y MÉTRICAS ---
+    query = st.text_input("Introduce tu pregunta sobre el documento:")
+    
+    if query:
+        llm = ChatGroq(groq_api_key=api_key, model_name=model_choice, temperature=temp)
         
         col1, col2, col3 = st.columns(3)
 
+        # Columna 1: LLM Simple
         with col1:
-            st.subheader("LLM Simple")
-            # Inferencia sin contexto
-            response = llm.invoke(user_question)
-            st.write(response.content)
+            st.subheader("🤖 LLM Simple")
+            start = time.time()
+            resp1 = llm.invoke(query).content
+            latency = time.time() - start
+            st.write(resp1)
+            st.caption(f"⏱️ Latencia: {latency:.2f}s")
 
+        # Columna 2: RAG Estándar (Parámetros por defecto)
         with col2:
-            st.subheader("RAG Estándar")
-            # Simulación de parámetros default (ej. chunk 500, k=3)
-            qa_chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=retriever)
-            st.write(qa_chain.run(user_question))
+            st.subheader("📚 RAG Estándar")
+            start = time.time()
+            # Usamos k=3 por defecto
+            std_retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+            qa_std = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=std_retriever)
+            resp2 = qa_std.run(query)
+            latency = time.time() - start
+            st.write(resp2)
+            st.caption(f"⏱️ Latencia: {latency:.2f}s")
 
+        # Columna 3: RAG Optimizado (Ajuste del Sidebar)
         with col3:
-            st.subheader("RAG Optimizado")
-            # RAG con el ajuste del Sidebar
-            custom_prompt = PromptTemplate(
-                template="Responde solo usando el contexto. Si no sabes, di 'No sé'. \nContexto: {context}\nPregunta: {question}",
+            st.subheader("🚀 RAG Optimizado")
+            start = time.time()
+            opt_retriever = vector_store.as_retriever(search_kwargs={"k": top_k})
+            
+            # System Prompt para evitar alucinaciones (Fase 4.2)
+            opt_prompt = PromptTemplate(
+                template="Contexto: {context}\n\nPregunta: {question}\n\nResponde estrictamente basado en el contexto. Si la respuesta no está, di 'No sé'.",
                 input_variables=["context", "question"]
             )
-            qa_chain_opt = RetrievalQA.from_chain_type(
-                llm=llm, chain_type="stuff", retriever=retriever, 
-                chain_type_kwargs={"prompt": custom_prompt}
+            
+            qa_opt = RetrievalQA.from_chain_type(
+                llm=llm, chain_type="stuff", retriever=opt_retriever,
+                chain_type_kwargs={"prompt": opt_prompt},
+                return_source_documents=True
             )
-            st.write(qa_chain_opt.run(user_question))
+            
+            result = qa_opt({"query": query})
+            latency
