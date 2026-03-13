@@ -190,7 +190,10 @@ def extract_text_from_image_groq(file_bytes: bytes, client) -> str:
 
 def chunk_text(text: str, chunk_size: int, overlap: int = 50) -> list[str]:
     """Simple recursive character text splitter."""
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    try:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+    except ImportError:
+        from langchain.text_splitter import RecursiveCharacterTextSplitter
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=min(overlap, chunk_size // 4),
