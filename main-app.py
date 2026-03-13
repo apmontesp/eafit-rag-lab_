@@ -240,14 +240,18 @@ def retrieve(query: str, index, chunks: list[str], top_k: int):
 def llm_simple(query: str, model: str, temperature: float, client) -> tuple[str, float]:
     """Zero-shot LLM call, no context."""
     t0 = time.time()
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": query}],
-        temperature=temperature,
-        max_tokens=1024,
-    )
-    elapsed = time.time() - t0
-    return resp.choices[0].message.content.strip(), elapsed
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": query}],
+            temperature=temperature,
+            max_tokens=1024,
+        )
+        elapsed = time.time() - t0
+        return resp.choices[0].message.content.strip(), elapsed
+    except Exception as e:
+        elapsed = time.time() - t0
+        return f"❌ Error al llamar la API: {str(e)}", elapsed
 
 
 def llm_rag(query: str, context_chunks: list[tuple], model: str, temperature: float,
@@ -264,17 +268,21 @@ def llm_rag(query: str, context_chunks: list[tuple], model: str, temperature: fl
     )
 
     t0 = time.time()
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"},
-        ],
-        temperature=temperature,
-        max_tokens=1024,
-    )
-    elapsed = time.time() - t0
-    return resp.choices[0].message.content.strip(), elapsed, avg_sim
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"},
+            ],
+            temperature=temperature,
+            max_tokens=1024,
+        )
+        elapsed = time.time() - t0
+        return resp.choices[0].message.content.strip(), elapsed, avg_sim
+    except Exception as e:
+        elapsed = time.time() - t0
+        return f"❌ Error al llamar la API: {str(e)}", elapsed, avg_sim
 
 
 # ─── Sidebar ──────────────────────────────────────────────────────────────────
@@ -294,8 +302,13 @@ with st.sidebar:
 
     model_choice = st.selectbox(
         "🤖 Modelo",
-        ["llama3-70b-8192", "mixtral-8x7b-32768"],
-        help="Llama-3-70b o Mixtral-8x7b via Groq"
+        [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-8b-instant",
+            "mixtral-8x7b-32768",
+            "gemma2-9b-it",
+        ],
+        help="Modelos disponibles en Groq (2025)"
     )
 
     temperature = st.slider("🌡️ Temperature", 0.0, 1.0, 0.2, 0.05)
